@@ -100,6 +100,7 @@ from .transformer import (
 )
 
 from .CM_SSM import CenterPredictor,ExistPredictor,RGBAdjuster,Fusion_Module
+from .F2SoftHG import F2SoftHG,ShapeAlignConv,MergeConv,SoftHGBlock
 
 __all__ = (
     "Conv",
@@ -184,4 +185,5 @@ __all__ = (
 
     "GPT","Add2","Add","CrossTransformerFusion", 'TransformerFusionBlock','NiNfusion',
     "CenterPredictor","ExistPredictor","RGBAdjuster","Fusion_Module",
+    "F2SoftHG","ShapeAlignConv","MergeConv","SoftHGBlock",
 )

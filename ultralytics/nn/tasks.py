@@ -75,6 +75,7 @@ from ultralytics.nn.modules import (
     v10Detect, DetectDeepDBB, DetectWDBB, DetectV8, DetectAux,
     Detect_LSCD, Segment_LSCD, Pose_LSCD, OBB_LSCD,
     CenterPredictor,ExistPredictor,RGBAdjuster,Fusion_Module,
+    F2SoftHG,ShapeAlignConv,MergeConv,SoftHGBlock
 )
 
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
@@ -1260,11 +1261,36 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             c2 = args[0]
             # c1 = ch[f]
             pass
-        elif m in (CenterPredictor,ExistPredictor,RGBAdjuster):
+        elif m in (CenterPredictor,ExistPredictor):
             c1=args[0]
+        elif m is RGBAdjuster:
+            c1=0
+            for fi in f:
+                c1+=ch[fi]
+            c1=c1//2
+            args = [c1, *args]
         elif m is Fusion_Module:
             c1=args[0]
             c2=c1*2
+        elif m is F2SoftHG:
+            c1 = ch[f[1]]
+            c2 = c1
+            args = [c1, c2, *args]
+            if scale in "m":  
+                args.append(False)
+        elif m is ShapeAlignConv:
+            c2 = ch[f] * 2
+            args = [ch[f]]
+            if scale in "m": 
+                c2 = ch[f]
+                args.append(False)
+        elif m is MergeConv:
+            c2 = ch[f[0]]
+            args = [c2]
+        elif m is SoftHGBlock:
+            c1=ch[f[0]]+ch[f[1]]
+            c2=ch[f[0]]
+            args = [ch[f[0]], *args]
         else:
             c2 = ch[f]
         # print(n)

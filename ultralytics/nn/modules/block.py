@@ -12,6 +12,7 @@ from .transformer import TransformerBlock
 import math
 import numpy as np
 from .CM_SSM import CenterPredictor,ExistPredictor,RGBAdjuster,Fusion_Module
+# from .F2SoftHG import F2SoftHG,ShapeAlignConv,MergeConv
 
 from .rep_block import  DiverseBranchBlock, WideDiverseBranchBlock, DeepDiverseBranchBlock,FeaturePyramidAggregationAttention,RecursionDiverseBranchBlock
 __all__ = (
@@ -253,6 +254,8 @@ class C2f(nn.Module):
 
     def forward(self, x):
         """Forward pass through C2f layer."""
+        if torch.isnan(x).any():
+            raise ValueError("C3k2 contains NaN")
         y = list(self.cv1(x).chunk(2, 1))
         y.extend(m(y[-1]) for m in self.m)
         out = self.cv2(torch.cat(y, 1))
@@ -2018,6 +2021,8 @@ class A2C2f(nn.Module):
 
     def forward(self, x):
         """Forward pass through R-ELAN layer."""
+        if torch.isnan(x).any():
+            raise ValueError("A2C2f contains NaN")
         y = [self.cv1(x)]
         y.extend(m(y[-1]) for m in self.m)
         y = self.cv2(torch.cat(y, 1))

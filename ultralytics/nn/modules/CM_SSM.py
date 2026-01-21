@@ -9,6 +9,7 @@ import torch.nn.functional as F
 # from proposed.fuison_strategy.base_fusion import Fusion_Module
 from .fusion import SS2D_rgbt #Fusion_Module, RGBAdjuster
 # from models.decoder.DeepLabV3 import DeepLabHeadV3Plus
+from .conv import Conv
 
 """
 class CMSSM(nn.Module):
@@ -164,9 +165,7 @@ class CenterPredictor(nn.Module):
         super().__init__()
 
         self.predict_heads= nn.Sequential(
-                nn.Conv2d(channel, channel, 3, padding=1),
-                nn.BatchNorm2d(channel),
-                nn.ReLU(),
+                Conv(channel, channel, k=3, p=1),
                 nn.AdaptiveAvgPool2d(1),
                 nn.Flatten(),
                 nn.Linear(channel, 2),
@@ -182,9 +181,7 @@ class ExistPredictor(nn.Module):
         
         # 为每层创建仿射预测头（带物理约束）
         self.exist_heads=nn.Sequential(
-                nn.Conv2d(in_ch, in_ch, 3, padding=1),
-                nn.BatchNorm2d(in_ch),
-                nn.ReLU(),
+                Conv(in_ch, in_ch, k=3, p=1),
                 nn.AdaptiveAvgPool2d(1),
                 nn.Flatten(),
                 nn.Linear(in_ch, 1),
@@ -247,7 +244,7 @@ class CM_SSM(nn.Module):
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+"""
 class AffinePredictor(nn.Module):
     def __init__(self, in_ch=64, kernel_size=3, padding=1):
         super().__init__()
@@ -321,7 +318,7 @@ class AffinePredictor(nn.Module):
         return affine_params
 
         # return affine_params_raw
-
+"""
 # ##局部非线性像素级微调（“取值相对宽/高比例”）
 # class LocalOffsetPredictor(nn.Module):
 #     def __init__(self, in_ch):
@@ -475,16 +472,60 @@ class LocalOffsetPredictor(nn.Module):
 
         return warped_feat
 """
+class AffinePredictor(nn.Module):
+    """
+    最简单的直接预测器
+    直接从特征预测6个仿射参数，不加复杂约束
+    """
+    def __init__(self, in_ch=64):
+        super().__init__()
+        
+        # 极简网络
+        self.net = nn.Sequential(
+            Conv(2 * in_ch, in_ch, k=3, p=1),
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(in_ch, 6)
+        )
+        
+        # 初始化
+        nn.init.normal_(self.net[-1].weight, mean=0, std=0.001)
+        nn.init.zeros_(self.net[-1].bias)
 
+    
+    def forward(self, fused):
+        # 检查输入
+        if torch.isnan(fused).any():
+            print("NaN in input to SimpleDirectAffinePredictor")
+            raise ValueError("Input contains NaN")
+        # 直接预测，不做复杂约束
+        params = self.net(fused)
+
+        # 检查网络输出
+        if torch.isnan(params).any():
+            print("NaN in net output")
+            print("params:", params)
+            raise ValueError("Net output contains NaN")
+        
+        # 只在最后简单约束一下范围
+        # 分解参数
+        a = 1.0 + 0.2 * torch.tanh(params[:, 0])  # [0.8, 1.2]
+        d = 1.0 + 0.2 * torch.tanh(params[:, 3])
+        b = 0.05 * torch.tanh(params[:, 1])       # [-0.05, 0.05]
+        c = 0.05 * torch.tanh(params[:, 2])
+        tx = 0.2 * torch.tanh(params[:, 4])       # [-0.2, 0.2]
+        ty = 0.2 * torch.tanh(params[:, 5])
+        
+        return torch.stack([a, b, c, d, tx, ty], dim=1)
 ##局部非线性像素级微调
 class LocalOffsetPredictor(nn.Module):
     def __init__(self, in_ch):
         super(LocalOffsetPredictor, self).__init__()
-        self.conv_offset = nn.Conv2d(in_ch, 2, kernel_size=3, padding=1)  # 输出两个通道，分别对应δx和δy
+        self.conv_offset = Conv(in_ch, 2, k=3, p=1)  # 输出两个通道，分别对应δx和δy
         
     def forward(self, x):
         offset = self.conv_offset(x)  # (N, 2, H, W)
-        offset = torch.tanh(offset) * 0.05  # 将偏移量限制在 [-0.01, 0.01]
+        offset = torch.tanh(offset) * 0.04  # 将偏移量限制在 [-0.01, 0.01]
         return offset
 
 
@@ -493,15 +534,16 @@ class DepthwiseConv(nn.Module):
     """深度可分离卷积（轻量级核心）"""
     def __init__(self, in_ch, out_ch):
         super().__init__()
-        self.dw = nn.Conv2d(in_ch, in_ch, kernel_size=3, padding=1, groups=in_ch)
-        self.pw = nn.Conv2d(in_ch, out_ch, kernel_size=1)
+        self.dw = Conv(in_ch, in_ch, k=3, p=1, g=in_ch)
+        self.pw = Conv(in_ch, out_ch, k=1)
     
     def forward(self, x):
         x = self.dw(x)
         x = self.pw(x)
         return x
 
-import numpy as np 
+import numpy as np
+
 class RGBAdjuster(nn.Module):
     def __init__(self, channel=496, kernel_size=3, padding=1,
                  use_Affine=False, use_centerPoint=False, use_exist=False, use_weight_map=False, use_localOffset=False, num_features=5):
@@ -519,7 +561,7 @@ class RGBAdjuster(nn.Module):
             channel_list=[128,128,256] #后三层,512
 
         if self.use_Affine:
-            self.affine_heads = AffinePredictor(channel//2, kernel_size=kernel_size, padding=padding)
+            self.affine_heads = AffinePredictor(channel//2)
 
         if use_centerPoint:
             self.centerPoint_heads = CenterPredictor(channel//2)
@@ -540,25 +582,15 @@ class RGBAdjuster(nn.Module):
 
         # ### 修改行：5层×2模态 => 10C，按 rgb5,ir5,rgb4,ir4,... 交错拼接后降到 2C（尺寸保持不变）
         self.cross_level_reduce = nn.Sequential(
-            nn.Conv2d(channel * 2, channel, kernel_size=1, padding=0),  # 10C -> 2C
-            nn.ReLU(inplace=True),
-            nn.Conv2d(channel, channel, kernel_size=3, padding=1),  # 保持 H,W 不变
-            nn.ReLU(inplace=True),
+            Conv(channel * 2, channel, k=1, p=0),  # 10C -> 2C
+            Conv(channel, channel, k=3, p=1),  # 保持 H,W 不变
         )
-        self.align_level_idx = 2
+        self.align_level_idx = num_features//2
 
-        self.rgb_level_reduce = nn.Sequential(
-            nn.Conv2d(channel, channel//2, kernel_size=1, padding=0),  # 10C -> 2C
-            nn.ReLU(inplace=True),
-        )
+        self.rgb_level_reduce = Conv(channel, channel//2, k=1, p=0)  # 10C -> 2C
+        self.ir_level_reduce = Conv(channel, channel//2, k=1, p=0)  # 10C -> 2C
 
-        self.ir_level_reduce = nn.Sequential(
-            nn.Conv2d(channel, channel//2, kernel_size=1, padding=0),  # 10C -> 2C
-            nn.ReLU(inplace=True),
-        )
-
-
-    def forward(self, x):
+    def forward(self, x):#输入rgb5层特征图+ir5层
         """
         x[0]=rgb_feats: list/tuple(5) of [B,C,Hi,Wi]
         x[1]=ir_feats : list/tuple(5) of [B,C,Hi,Wi]
@@ -593,7 +625,13 @@ class RGBAdjuster(nn.Module):
             ir_aligned.append(self._align_to_hw(ir_feats[i],  (Ht, Wt)))   # ### 修改：全都对齐到 H3,W3
 
         rgb_stack = torch.cat([rgb_aligned_i for rgb_aligned_i in rgb_aligned], dim=1)  # ### 修改：只拼 RGB
+        if torch.isnan(rgb_stack).any():
+            raise ValueError("rgb_stack contains NaN")
+
         rgb_fused = self.rgb_level_reduce(rgb_stack) 
+
+        if torch.isnan(rgb_fused).any():
+            raise ValueError("rgb_fused contains NaN")
 
         center_points, uav_exist = None, None
 
@@ -608,12 +646,29 @@ class RGBAdjuster(nn.Module):
 
         if self.use_Affine:
             ir_stack = torch.cat([ir_aligned_i for ir_aligned_i in ir_aligned], dim=1)   # ### 修改：只拼 IR
+            if torch.isnan(ir_stack).any():
+                raise ValueError("ir_stack contains NaN")
             ir_fused = self.ir_level_reduce(ir_stack)  # [B,C,Ht,Wt]  # ### 修改：IR 融合降维
+            if torch.isnan(ir_fused).any():
+                raise ValueError("ir_fused contains NaN")
             fused_for_affine = torch.cat([ir_fused, rgb_fused], dim=1)  # [B,2C,Ht,Wt]  # ### 修改：符合你的要求
             # fused_for_affine, _ = self.interleave_by_level(rgb_aligned, ir_aligned, order=(4,3,2,1,0))
             affine_params = self.affine_heads(fused_for_affine)            # [B,6]
+            # m = affine_params.abs().max().item()
+            # print("theta abs max:", m)
             txtys = affine_params[:, 4:]                                   # [B,2]
-            theta = affine_params.view(-1, 2, 3)  # [B,2,3]
+            # theta = affine_params.view(-1, 2, 3)  # [B,2,3]
+            a  = affine_params[:, 0]
+            b  = affine_params[:, 1]
+            c  = affine_params[:, 2]
+            d  = affine_params[:, 3]
+            tx = affine_params[:, 4]
+            ty = affine_params[:, 5]
+            theta = torch.stack(
+                [torch.stack([a, b, tx], dim=1),
+                torch.stack([c, d, ty], dim=1)],
+                dim=1
+            )  # [B,2,3]
 
             # B,C,H,W = weighted_rgb.shape
             # grid = F.affine_grid(theta, size=[B, C, H, W], align_corners=True)
@@ -632,8 +687,13 @@ class RGBAdjuster(nn.Module):
                 Bi, Ci, Hi, Wi = feat_i.shape
 
                 # ### 关键：θ 相同，但每层分辨率不同，必须按各自 size 生成 grid
-                grid_i = F.affine_grid(theta, size=[Bi, Ci, Hi, Wi], align_corners=True)
-                warped_i = F.grid_sample(feat_i, grid_i, align_corners=True, mode='bilinear')
+                grid_i = F.affine_grid(theta, size=[Bi, Ci, Hi, Wi], align_corners=False)
+                warped_i = F.grid_sample(feat_i, grid_i, align_corners=False, mode='bilinear')
+
+                self._check("affine_params", affine_params)
+                self._check("theta", theta)
+                self._check("grid_i", grid_i)
+                self._check("warped_i", warped_i)
 
                 if self.use_localOffset: #整图漂移
                     refine_fused = torch.cat([ir_feats[i], warped_i], dim=1)  
@@ -685,6 +745,10 @@ class RGBAdjuster(nn.Module):
         # return warped_rgb_feats, center_points, uav_exist, txtys
         return warped_rgb_feats, center_points, uav_exist, affine_params
 
+
+    def _check(self, name, t):
+        if not torch.isfinite(t).all():
+            raise RuntimeError(f"[Non-finite] {name}")
     
     def _align_to_hw(self, feat, target_hw):
         """
@@ -700,7 +764,8 @@ class RGBAdjuster(nn.Module):
 
         # ### 修改行：下采样到 target_hw（pool2d 语义）
         if (H > Ht) or (W > Wt):
-            return F.avg_pool2d(feat, kernel_size=H//Ht, stride=H//Ht)
+            return F.adaptive_avg_pool2d(feat, output_size=(Ht, Wt))
+
 
         # ### 修改行：上采样到 target_hw
         if (H < Ht) or (W < Wt):

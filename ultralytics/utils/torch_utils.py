@@ -400,8 +400,8 @@ def get_flops(model, imgsz=640):
             # Use stride size for input tensor
             stride = max(int(model.stride.max()), 32) if hasattr(model, "stride") else 32  # max stride
             # im = torch.empty((1, p.shape[1], stride, stride), device=p.device)  # input image in BCHW format
-            # im = torch.empty((1, ch, stride, stride), device=p.device)  # input image in BCHW format
-            im = torch.zeros((1, ch, stride, stride), device=p.device)  # input image in BCHW format
+            im = torch.empty((1, ch, stride, stride), device=p.device)  # input image in BCHW format
+            # im = torch.zeros((1, ch, stride, stride), device=p.device)  # input image in BCHW format
             # print("6666666666666")
             # print("im:",im)
             # flops = thop.profile(deepcopy(model), inputs=[im], verbose=True)

@@ -52,6 +52,8 @@ class Conv(nn.Module):
 
     def forward(self, x):
         """Apply convolution, batch normalization and activation to input tensor."""
+        if torch.isnan(x).any():
+            raise ValueError("Conv contains NaN")
         return self.act(self.bn(self.conv(x)))
 
     def forward_fuse(self, x):
@@ -333,8 +335,11 @@ class Concat(nn.Module):
         self.d = dimension
 
     def forward(self, x):
+        # print("len(x):", len(x))
         # print("x[0].shape:",x[0].shape)
         # print("x[1].shape:",x[1].shape)
+        # if len(x)==3:
+        #     print("x[2].shape:",x[2].shape)
         """Forward pass for the YOLOv8 mask Proto module."""
         return torch.cat(x, self.d)
 
@@ -369,6 +374,8 @@ class SilenceChannel(nn.Module):
         self.c_start=c_start
         self.c_end = c_end
     def forward(self, x):
+        if torch.isnan(x).any():
+            raise ValueError("SilenceChannel contains NaN")
         return x[...,self.c_start:self.c_end, :,:]
 
 class SilenceList(nn.Module):

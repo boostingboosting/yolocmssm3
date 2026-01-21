@@ -99,7 +99,7 @@ warmup_bias_lr: 0.1 # (float) warmup initial bias lr
 box: 7.5 # (float) box loss gain
 cls: 0.5 # (float) cls loss gain (scale with pixels)
 dfl: 1.5 # (float) dfl loss gain
-offset: 0.5 #offset loss gain
+offset: 2 #offset loss gain
 rgbcenter: 0.05 #rgbcenter loss gain
 uav_exist: 5 #uav_exist loss gain
 pose: 12.0 # (float) pose loss gain

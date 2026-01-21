@@ -669,7 +669,7 @@ class v8DetectionLoss:
         if txty_preds!=None:
             # loss[3] = self.compute_offset_loss(txty_preds, batch['offset'][:,:2], batch['area'])
             # loss[3] = torch.zeros(loss[2].shape)
-            loss[3] = self.affine_xy_center_loss(txty_preds, batch['boxes_rgb'], batch['boxes_ir'], True, True)
+            loss[3] = self.affine_xy_center_loss(txty_preds, batch['boxes_rgb'], batch['boxes_ir'], True)
             # loss[3] = self.affine_xy_center_loss(txty_preds, batch['boxes_rgb'], batch['boxes_ir'], True, True)
             # loss[3] = self.affine_box_corner_loss(txty_preds, batch['boxes_rgb'], batch['boxes_ir'])
             if loss[3]==None:
@@ -879,89 +879,89 @@ class v8DetectionLoss:
         return total_loss
 
 
-
-
-    def affine_xy_center_loss(self, pred_affine_params, rgb_boxes_xywh, ir_boxes_xywh,
-                            use_area_scale: bool = False, use_smooth_l1: bool = False):
-        B = pred_affine_params.shape[0]
+    def affine_xy_center_loss(
+        self,
+        pred_affine_params,   # [B,6] = [a,b,c,d,tx,ty]
+        rgb_boxes_xywh,       # [B,4] in [0,1]
+        ir_boxes_xywh,        # [B,4] in [0,1]
+        use_smooth_l1: bool = True,
+        use_area_scale: bool = True,
+        area_mode: str = "inv",     # "sqrt" 或 "inv"
+        # area_min: float = 1e-3,      # ### 防止除0/爆炸
+        lambda_affine: float = 1.0  # ### 解决你说的“loss偏小”
+    ):
         device = pred_affine_params.device
+        B = pred_affine_params.shape[0]
 
-        # 步骤1：提取中心坐标 + 计算IR框面积（仅当use_area_scale=True时使用）
-        rgb_x_c = rgb_boxes_xywh[:, 0]  # [B]
-        rgb_y_c = rgb_boxes_xywh[:, 1]  # [B]
-        ir_x_c = ir_boxes_xywh[:, 0]    # [B]
-        ir_y_c = ir_boxes_xywh[:, 1]    # [B]
-        ir_w = ir_boxes_xywh[:, 2]
-        ir_h = ir_boxes_xywh[:, 3]
-        ir_area = ir_w * ir_h + 1e-8    # [B]，+1e-8避免除以0
+        rgb_x = rgb_boxes_xywh[:, 0]
+        rgb_y = rgb_boxes_xywh[:, 1]
+        ir_x  = ir_boxes_xywh[:, 0]
+        ir_y  = ir_boxes_xywh[:, 1]
+        ir_w  = ir_boxes_xywh[:, 2]
+        ir_h  = ir_boxes_xywh[:, 3]
 
-        # 步骤2：生成有效样本掩码
-        rgb_center_zero = (rgb_x_c == 0) & (rgb_y_c == 0)
-        ir_center_zero = (ir_x_c == 0) & (ir_y_c == 0)
-        invalid_mask = rgb_center_zero | ir_center_zero
-        valid_mask = ~invalid_mask
-        valid_num = valid_mask.sum().float()
-
-        # 无有效样本返回0损失
-        if valid_num < 1e-6:
+        valid_mask = ~(((rgb_x == 0) & (rgb_y == 0)) | ((ir_x == 0) & (ir_y == 0)))
+        if valid_mask.sum() < 1:
             return torch.tensor(0.0, device=device, requires_grad=True)
 
-        # 步骤3：构造仿射矩阵 + 变换RGB中心
-        a = pred_affine_params[:, 0]
-        b = pred_affine_params[:, 1]
-        c = pred_affine_params[:, 2]
-        d = pred_affine_params[:, 3]
+        # --- 改动开始：YOLO [0,1] -> affine [-1,1] ---
+        rgb_xn = 2.0 * rgb_x - 1.0
+        rgb_yn = 2.0 * rgb_y - 1.0
+        ir_xn  = 2.0 * ir_x  - 1.0
+        ir_yn  = 2.0 * ir_y  - 1.0
+        # --- 改动结束 ---
+
+        a  = pred_affine_params[:, 0]
+        b  = pred_affine_params[:, 1]
+        c  = pred_affine_params[:, 2]
+        d  = pred_affine_params[:, 3]
         tx = pred_affine_params[:, 4]
         ty = pred_affine_params[:, 5]
 
-        # 批量仿射矩阵 [B, 2, 3]
-        M = torch.stack([
-            torch.stack([a, b, tx], dim=1),
-            torch.stack([c, d, ty], dim=1)
-        ], dim=1)
+        # --- 改动开始：M 与 affine_grid 同语义 ---
+        M = torch.stack(
+            [torch.stack([a, b, tx], dim=1),
+            torch.stack([c, d, ty], dim=1)],
+            dim=1
+        )  # [B,2,3]
+        # --- 改动结束 ---
 
-        # RGB中心齐次坐标变换
-        rgb_center = torch.stack([rgb_x_c, rgb_y_c], dim=1)  # [B, 2]
-        rgb_center_homo = torch.cat([
-            rgb_center,
-            torch.ones([B, 1], device=device, dtype=rgb_center.dtype)
-        ], dim=1)  # [B, 3]
-        rgb_center_homo = rgb_center_homo.unsqueeze(-1)  # [B, 3, 1]
-        rgb_center_transformed_homo = torch.bmm(M, rgb_center_homo)  # [B, 2, 1]
-        rgb_center_transformed = rgb_center_transformed_homo.squeeze(-1)  # [B, 2]
+        rgb_h = torch.stack([rgb_xn, rgb_yn, torch.ones_like(rgb_xn)], dim=1).unsqueeze(-1)  # [B,3,1]
+        pred  = torch.bmm(M, rgb_h).squeeze(-1)  # [B,2]
 
-        pred_x_c = rgb_center_transformed[:, 0]
-        pred_y_c = rgb_center_transformed[:, 1]
+        pred_xn = pred[:, 0][valid_mask]
+        pred_yn = pred[:, 1][valid_mask]
+        tgt_xn  = ir_xn[valid_mask]
+        tgt_yn  = ir_yn[valid_mask]
 
-        # 步骤4：筛选有效样本
-        valid_pred_x = pred_x_c[valid_mask]
-        valid_pred_y = pred_y_c[valid_mask]
-        valid_ir_x = ir_x_c[valid_mask]
-        valid_ir_y = ir_y_c[valid_mask]
-        valid_ir_area = ir_area[valid_mask]
-
-        # 步骤5：计算偏移损失（可选Smooth L1 / 普通L1）
         if use_smooth_l1:
-            # Smooth L1 Loss：更鲁棒，对异常值不敏感
-            x_loss = F.smooth_l1_loss(valid_pred_x, valid_ir_x, reduction='none')
-            y_loss = F.smooth_l1_loss(valid_pred_y, valid_ir_y, reduction='none')
+            dx = F.smooth_l1_loss(pred_xn, tgt_xn, reduction="none")
+            dy = F.smooth_l1_loss(pred_yn, tgt_yn, reduction="none")
         else:
-            # 普通L1 Loss：计算简单，偏移量直观
-            x_loss = torch.abs(valid_pred_x - valid_ir_x)
-            y_loss = torch.abs(valid_pred_y - valid_ir_y)
+            dx = (pred_xn - tgt_xn).abs()
+            dy = (pred_yn - tgt_yn).abs()
 
-        # 步骤6：可选：偏移损失 ÷ IR框面积（放大偏移）
+        per_sample = dx + dy  # [Nv]
+
+        # --- 改动开始：面积缩放（可选，且做 clamp 防止小框爆炸）---
         if use_area_scale:
-            x_loss = x_loss / valid_ir_area
-            y_loss = y_loss / valid_ir_area
+            area = (ir_w * ir_h)[valid_mask] # [Nv]
+            if area_mode == "sqrt":
+                scale = 1.0 / torch.sqrt(area)   # 温和：小框更敏感但不至于爆
+            elif area_mode == "inv":
+                scale = 1.0 / area               # 更激进：容易不稳定，谨慎
+            else:
+                raise ValueError(f"Unknown area_mode={area_mode}")
+            per_sample = per_sample * scale
+        # --- 改动结束 ---
 
-        # 单个样本损失（x+y偏移）
-        single_sample_loss = x_loss + y_loss  # [有效B]
+        loss = per_sample.mean()
 
-        # 步骤7：最终损失：有效样本的普通均值（mean）
-        center_loss = single_sample_loss.mean()
+        # --- 改动开始：整体权重，解决“loss过小”更直接更稳 ---
+        loss = loss * lambda_affine
+        # --- 改动结束 ---
 
-        return center_loss
+        return loss
 
     def affine_box_corner_loss(self, pred_affine_params, rgb_boxes_xywh, ir_boxes_xywh,
                             use_area_scale: bool = False, use_smooth_l1: bool = False):

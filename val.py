@@ -11,7 +11,7 @@ if __name__ == '__main__':
     # model = YOLO("/home/zhangquan/clg/yolocmssm2/results/AntiUAV-yolo11n-RGBRGB6C-midfusion-P3/weights/best.pt")
     # model = YOLO("/home/zhangquan/clg/yolocmssm2/runs/AntiUAV/AntiUAV-yolo11n-100epoch-batch32-RGBRGB6C-midfusion-cmssm-mi-flow/weights/best.pt")
     # model = YOLO("/home/zhangquan/clg/yolocmssm2/runs/AntiUAV/150epoch-yolorgbt-adjuster-noLocal4/weights/best.pt")
-    model = YOLO("/home/zhangquan/clg/yolocmssm2/runs/AntiUAV/200epoch-yolo12-RGBT-midfusion-affine001-hp/weights/best.pt")
+    model = YOLO("/home/zhangquan/clg/yolocmssm2/results/200epoch-yolo12-affine2-localoffset-hg168/weights/best.pt")
     model.val(data=R'ultralytics/cfg/datasets/AntiUAV-rgbt.yaml',
               split='test',#测试集
               imgsz=640,
@@ -24,4 +24,4 @@ if __name__ == '__main__':
               # save_json=True, # if you need to cal coco metrice
               project='runs/test',
             #   name='yolobackboneHead-150epoch-cmssm2',)
-              name='200epoch-yolo12-RGBT-midfusion-Affine001-hp',)
+              name='200epoch-yolo12-affine2-localoffset-hg168',)
